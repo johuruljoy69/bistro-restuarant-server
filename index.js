@@ -103,7 +103,13 @@ async function run() {
       const query = { _id: new ObjectId(id) }
       const result = await menuCollection.deleteOne(query);
       res.send(result);
-    })
+    });
+
+        // reviews related apis
+        app.get('/reviews', async (req, res) => {
+          const result = await reviewCollection.find().toArray();
+          res.send(result);
+        })
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
