@@ -105,11 +105,38 @@ async function run() {
       res.send(result);
     });
 
-        // reviews related apis
-        app.get('/reviews', async (req, res) => {
-          const result = await reviewCollection.find().toArray();
+    // reviews related apis
+    app.get('/reviews', async (req, res) => {
+      const result = await reviewCollection.find().toArray();
+      res.send(result);
+    });
+
+        // carts collection
+        app.get('/carts', verifyJWT, async (req, res) => {
+          const email = req.query.email;
+    
+          if (!email) {
+            res.send([]);
+          }
+    
+          const decodedEmail = req.decoded.email;
+          if (email !== decodedEmail) {
+            return res.status(403).send({ error: true, message: 'forbidden access' })
+          }
+    
+          const query = { email: email }
+          const result = await cartCollection.find(query).toArray();
           res.send(result);
-        })
+        });
+    
+        app.post('/carts', async (req, res) => {
+          item = req.body;
+          console.log(item);
+          result = await cartCollection.insertOne(item)
+          res.send(result)
+        });
+
+        
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
