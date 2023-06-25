@@ -3,6 +3,7 @@ const app = express();
 const cors = require('cors')
 const jwt = require('jsonwebtoken');
 require('dotenv').config()
+const stripe = require('stripe')(process.env.PAYMENT_SECRET_KEY)
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 5000;
 
@@ -49,6 +50,7 @@ async function run() {
     const menuCollection = client.db("bistroDB").collection("menu");
     const reviewCollection = client.db("bistroDB").collection("reviews");
     const cartCollection = client.db("bistroDB").collection("carts");
+    const paymentCollection = client.db("bistroDB").collection("payments");
 
     // jwt token
     app.post('/jwt', (req, res) => {
@@ -67,7 +69,7 @@ async function run() {
         return res.status(403).send({ error: true, message: 'forbidden message' });
       }
       next();
-    }
+    };
 
     /**
      * 0. do not show secure links to those who should not see the links
@@ -108,9 +110,9 @@ async function run() {
       res.send(result);
     })
 
-    app.patch('/users/admin/:id' , async (req, res) => {
+    app.patch('/users/admin/:id', async (req, res) => {
       const id = req.params.id;
-      const filter = {_id: new ObjectId(id)};
+      const filter = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: {
           role: 'admin'
@@ -124,6 +126,19 @@ async function run() {
     // menu related apis
     app.get('/menu', async (req, res) => {
       const result = await menuCollection.find().toArray();
+      res.send(result);
+    })
+
+    app.post('/menu', verifyJWT, verifyAdmin, async (req, res) => {
+      const newItem = req.body;
+      const result = await menuCollection.insertOne(newItem)
+      res.send(result);
+    })
+
+    app.delete('/menu/:id', verifyJWT, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
+      const result = await menuCollection.deleteOne(query);
       res.send(result);
     })
 
@@ -143,7 +158,7 @@ async function run() {
 
       const decodedEmail = req.decoded.email;
       if (email !== decodedEmail) {
-        return res.status(403).send({ error: true, message: 'porviden access' })
+        return res.status(403).send({ error: true, message: 'forbidden access' })
       }
 
       const query = { email: email }
@@ -165,6 +180,96 @@ async function run() {
       res.send(result);
     })
 
+    // create payment intent
+    app.post('/create-payment-intent', verifyJWT, async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'usd',
+        payment_method_types: ['card']
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret
+      })
+    })
+
+    // payment related api
+    app.post('/payments', verifyJWT, async (req, res) => {
+      const payment = req.body;
+      const insertResult = await paymentCollection.insertOne(payment);
+
+      const query = { _id: { $in: payment.cartItems.map(id => new ObjectId(id)) } }
+      const deleteResult = await cartCollection.deleteMany(query)
+
+      res.send({ insertResult, deleteResult });
+    })
+
+    app.get('/admin-stats', verifyJWT, verifyAdmin, async (req, res) => {
+      const users = await usersCollection.estimatedDocumentCount();
+      const products = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+
+      // best way to get sum of the price field is to use group and sum operator
+      /*
+        await paymentCollection.aggregate([
+          {
+            $group: {
+              _id: null,
+              total: { $sum: '$price' }
+            }
+          }
+        ]).toArray()
+      */
+
+        const payments = await paymentCollection.find().toArray();
+        const revenue = payments.reduce( ( sum, payment) => sum + payment.price, 0);
+  
+        res.send({
+          revenue,
+          users,
+          products,
+          orders
+        })
+    })
+
+
+
+      app.get('/order-stats', verifyJWT, verifyAdmin, async(req, res) =>{
+        const pipeline = [
+          {
+            $lookup: {
+              from: 'menu',
+              localField: 'menuItems',
+              foreignField: '_id',
+              as: 'menuItemsData'
+            }
+          },
+          {
+            $unwind: '$menuItemsData'
+          },
+          {
+            $group: {
+              _id: '$menuItemsData.category',
+              count: { $sum: 1 },
+              total: { $sum: '$menuItemsData.price' }
+            }
+          },
+          {
+            $project: {
+              category: '$_id',
+              count: 1,
+              total: { $round: ['$total', 2] },
+              _id: 0
+            }
+          }
+        ];
+  
+        const result = await paymentCollection.aggregate(pipeline).toArray()
+        res.send(result)
+  
+      })
 
 
     // Send a ping to confirm a successful connection
@@ -186,16 +291,3 @@ app.listen(port, () => {
   console.log(`Bistro Boss Restaurant is sitting on port: ${port}`);
 })
 
-
-/**
- * -------------------------
- *      Naming Convention
- * -------------------------
- * 1. users: userCollection
- * app.get('/users')
- * app.get('user/:id')
- * app.post('/user')
- * app.put('/user/:id')
- * app.patch('/user/:id')
- * app.delete('/user/:id')
-*/
