@@ -85,10 +85,16 @@ async function run() {
       const result = await usersCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
-    
+
     // menu related apis
     app.get('/menu', async (req, res) => {
       const result = await menuCollection.find().toArray();
+      res.send(result);
+    })
+
+    app.post('/menu', verifyJWT, verifyAdmin, async (req, res) => {
+      const newItem = req.body;
+      const result = await menuCollection.insertOne(newItem)
       res.send(result);
     })
 
